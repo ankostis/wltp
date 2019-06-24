@@ -55,10 +55,17 @@ import sys
 import numpy as np
 import pandas as pd
 
+from pandalone.mappings import Pstep
+
 from . import model
 
-
 log = logging.getLogger(__name__)
+
+
+#: names of "properties" series
+p = Pstep()
+#: names of "cycle" dataframe
+c = Pstep()
 
 
 def _shapes(*arrays):
@@ -139,9 +146,13 @@ class Experiment(object):
         if res_coeffs:
             (f0, f1, f2) = res_coeffs
         else:
+            log.warning(
+                "GUESSING resistance-coefficients(f0,f1, f2) from standard regression curves!"
+            )
             (f0, f1, f2) = calc_default_resistance_coeffs(
                 test_mass, params["resistance_coeffs_regression_curves"]
             )
+            vehicle["resistance_coeffs"] = [f0, f1, f2]
 
         if v_max is None:
             v_max = n_rated / gear_ratios[-1]
@@ -177,18 +188,7 @@ class Experiment(object):
 
             results["v_class"] = V
 
-        ## NOTE: Improved Acceleration calc on central-values with gradient.
-        #    The pure_load 2nd-part of the P_REQ from start-to-stop is 0, as it should.
-        #
-        # A       = np.gradient(V) ## TODO: Enable gradient acceleration-calculation.
-        A = np.diff(V)
-        A = np.append(A, 0)  # Restore element lost by diff().
-        A = A / 3.6
-
-        ## Required-Power needed early-on by Downscaling.
-        #
-        f_inertial = params.get("f_inertial", 1.1)
-        P_REQ = calcPower_required(V, A, SLOPE, test_mass, f0, f1, f2, f_inertial)
+        results = task_power_required_class(vehicle, p, results, c)
 
         if not is_velocity_forced:
             ## Downscale velocity-profile.
@@ -202,7 +202,7 @@ class Experiment(object):
                 downsc_coeffs = dsc_data["factor_coeffs"]
                 dsc_v_split = dsc_data.get("v_max_split", None)
                 f_downscale = calcDownscaleFactor(
-                    P_REQ,
+                    results[c.p_required_class],
                     p_max_values,
                     downsc_coeffs,
                     dsc_v_split,
@@ -213,8 +213,14 @@ class Experiment(object):
                 params["f_downscale"] = f_downscale
 
             if f_downscale > 0:
-                V = downscaleCycle(V, f_downscale, phases)
-            results["v_target"] = V
+                results[c.v] = downscaleCycle(results[c.v_class], f_downscale, phases)
+                results = task_power_required_target(vehicle, p, results, c)
+            else:
+                results[c.v_target], results[c.a], results[c.p_required] = (
+                    results[c.v_class],
+                    results[c.a_class],
+                    results[c.p_required_class],
+                )
 
         ## Run cycle to find internal matrices for all gears
         #    and (optionally) gearshifts.
@@ -266,10 +272,12 @@ class Experiment(object):
         V_REAL = RPM / _GEAR_RATIOS[GEARS - 1, range(len(V))]
         RPM[RPM < n_idle] = n_idle
 
+        results["a_class"] = A_CLASS
+        results["p_required_class"] = P_REQ_CLASS
+        results["p_required"] = P_REQ
         results["gears"] = GEARS
         results["v_real"] = V_REAL
         results["p_available"] = P_AVAIL
-        results["p_required"] = P_REQ
         results["rpm"] = RPM
         results["rpm_norm"] = N_NORM
         results["driveability"] = driveability_issues
@@ -550,13 +558,46 @@ def possibleGears_byEngineRevs(
     return (_GEARS_YES, CLUTCH)
 
 
-def calcPower_required(V, A, SLOPE, test_mass, f0, f1, f2, f_inertial):
+def task_power_required_class(pdf, p, cdf, c):
+    A, P = calcPower_required(
+        cdf[c.v_class],
+        cdf.get(c.slope),
+        pdf[p.test_mass],
+        *pdf[p.resistance_coeffs],
+        f_inertial=pdf[p.f_inertial],
+    )
+    cdf[c.p_required_class] = P
+    cdf[c.a_class] = A
+
+    return cdf
+
+
+def task_power_required_target(pdf, p, cdf, c):
+    A, P = calcPower_required(
+        cdf[c.v_target],
+        cdf.get(c.slope),
+        pdf[p.test_mass],
+        *pdf[p.resistance_coeffs],
+        f_inertial=pdf[p.f_inertial],
+    )
+    cdf[c.p_required] = P
+    cdf[c.a] = A
+
+
+def calcPower_required(V, SLOPE, test_mass, f0, f1, f2, f_inertial):
     """
 
     @see: Annex 2-3.1, p 71
     """
 
     gee = 9.81
+
+    ## NOTE: Improved Acceleration calc on central-values with gradient.
+    #    The pure_load 2nd-part of the P_REQ from start-to-stop is 0, as it should.
+    #
+    # A       = np.gradient(V) ## TODO: Enable gradient acceleration-calculation.
+    A = np.diff(V) / 3.6
+    A = np.append(A, 0)  # Restore element lost by diff().
 
     VV = V * V
     VVV = VV * V
@@ -575,7 +616,7 @@ def calcPower_required(V, A, SLOPE, test_mass, f0, f1, f2, f_inertial):
         ) / 3600.0
     assert V.shape == P_REQ.shape, _shapes(V, P_REQ)
 
-    return P_REQ
+    return A, P_REQ
 
 
 def calcPower_available(
