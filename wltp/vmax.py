@@ -32,7 +32,9 @@ GearVMaxRec = namedtuple("GearVMaxRec", "v_max  p_max  optimize_result  wot_df")
 VMaxRec = namedtuple("VMaxRec", "v_max  p_max  gears_df  wots_df")
 
 
-def _find_p_remain_root(pv: pd.DataFrame, initial_guess) -> optimize.OptimizeResult:
+def _find_p_remain_root(
+    pv: pd.DataFrame, initial_guess, **optimize_kwds
+) -> optimize.OptimizeResult:
     """
     Find the velocity (the "x") where power (the "y") gets to zero.
 
@@ -48,12 +50,15 @@ def _find_p_remain_root(pv: pd.DataFrame, initial_guess) -> optimize.OptimizeRes
     V, P = pv.iloc[:, 0], pv.iloc[:, 1]
     pv_curve = Spline(V, P, k=rank, ext=extrapolate_bounds)
     pv_jacobian = Spline(V, np.gradient(P), k=rank, ext=extrapolate_bounds)
+    jac2 = Spline(V, np.gradient(np.gradient(P)), k=rank, ext=extrapolate_bounds)
 
     ## NOTE: the default 'hybr' method fails to find any root!
-    res = optimize.root(pv_curve, initial_guess, jac=pv_jacobian, method="broyden1")
+    res = optimize.root_scalar(
+        pv_curve, x0=initial_guess, fprime=pv_jacobian, fprime2=jac2, **optimize_kwds
+    )
 
-    if res.success:
-        return pv_curve(res.x), res
+    if res.converged:
+        return pv_curve(res.root), res
     return None, res
 
 
@@ -83,10 +88,18 @@ def _calc_gear_v_max(
     df["p_road_loads"] = formulae.calc_road_load_power(df["v"], f0, f1, f2)
     df["p_remain"] = df[c_p_avail] - df["p_road_loads"]
     initial_guess_v = df.index.max() / gear_n2v_ratio
-    p_max, res = _find_p_remain_root(df[["v", "p_remain"]], initial_guess_v)
-    v_max = res.x if res.success else np.NaN
-    if res.success:
-        log.info("gear %s: , vmax: %s, p_remain: %s, nit: %s", g, v_max, p_max, res.nit)
+    p_max, res = _find_p_remain_root(
+        df[["v", "p_remain"]], initial_guess_v, method="halley", xtol=0.001
+    )
+    v_max = res.root if res.converged else np.NaN
+    if res.converged:
+        log.info(
+            "gear %s: , vmax: %s, p_remain: %s, nit: %s",
+            g,
+            v_max,
+            p_max,
+            res.iterations,
+        )
     return GearVMaxRec(v_max, p_max, res, df)
 
 
@@ -116,15 +129,14 @@ def calc_v_max(
     def _package_gears_df(v_maxes, p_maxes, optimize_results):
         """note: each arg is a list of items"""
         items1 = pd.DataFrame.from_dict({"v_max": v_maxes, "p_max": p_maxes})
-        items2 = pd.DataFrame.from_records(optimize_results)[
+        items2 = pd.DataFrame.from_records(vars(o) for o in optimize_results)[
             [
-                "success",
-                "status",
-                "message",
-                "nit",
+                "iterations",
+                "flag",
+                "iterations",
             ]  # , "nfev", "njev"]  # for other solvers
         ]
-        items2.columns = "solver_ok solver_status solver_msg solver_nit".split()
+        items2.columns = "solver_ok solver_msg solver_nit".split()
         return pd.concat((items1, items2), axis=1)
 
     def _package_wots_df(wot_df, solution_dfs):
