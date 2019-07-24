@@ -8,7 +8,7 @@
 
 import logging
 from collections import namedtuple
-from typing import Union
+from typing import List, Union
 
 import numpy as np
 import pandas as pd
@@ -32,9 +32,7 @@ GearVMaxRec = namedtuple("GearVMaxRec", "v_max  p_max  optimize_result  wot_df")
 VMaxRec = namedtuple("VMaxRec", "v_max  p_max  gears_df  wots_df")
 
 
-def _find_p_remain_root(
-    pv: pd.DataFrame, initial_guess, **optimize_kwds
-) -> optimize.OptimizeResult:
+def _find_p_remain_root(pv: pd.DataFrame, initial_guess) -> optimize.RootResults:
     """
     Find the velocity (the "x") where power (the "y") gets to zero.
 
@@ -43,28 +41,33 @@ def _find_p_remain_root(
     :return:
         optimization result (structure)
     """
-    Spline = interpolate.UnivariateSpline
-    extrapolate_bounds = 3
+    Spline = interpolate.InterpolatedUnivariateSpline
+    # extrapolate_type: 0(extend), 1(zero), 3(boundary value)
+    extrapolate_bounds = 0
+    derivative_extrapolate_bounds = 3
     rank = 1
 
     V, P = pv.iloc[:, 0], pv.iloc[:, 1]
     pv_curve = Spline(V, P, k=rank, ext=extrapolate_bounds)
-    pv_jacobian = Spline(V, np.gradient(P), k=rank, ext=extrapolate_bounds)
-    jac2 = Spline(V, np.gradient(np.gradient(P)), k=rank, ext=extrapolate_bounds)
+    P_grad1 = np.gradient(P)
+    P_grad2 = np.gradient(P_grad1)
+    pv_jacobian1 = Spline(V, P_grad1, k=rank, ext=derivative_extrapolate_bounds)
 
     ## NOTE: the default 'hybr' method fails to find any root!
     res = optimize.root_scalar(
-        pv_curve, x0=initial_guess, fprime=pv_jacobian, fprime2=jac2, **optimize_kwds
+        pv_curve,
+        bracket=[V.min(), V.max()],
+        x0=initial_guess,
+        fprime=pv_jacobian1,
+        method="newton",
+        # Low tol because GTR requires 1 decimal point in V.
+        xtol=0.0001,
     )
 
-    if res.converged:
-        return pv_curve(res.root), res
     return None, res
 
 
-def _calc_gear_v_max(
-    g, df: pd.DataFrame, c_p_avail, gear_n2v_ratio, f0, f1, f2
-) -> GearVMaxRec:
+def _calc_gear_v_max(g, df: pd.DataFrame, c_p_avail, n2v, f0, f1, f2) -> GearVMaxRec:
     """
     The `v_max` for a gear `g` is the solution of :math:`0.1 * P_{avail}(g) = P_{road_loads}`.
 
@@ -75,7 +78,7 @@ def _calc_gear_v_max(
         
         .. attention:: it appends columns in this dataframe.
         
-    :param gear_n2v_ratio:
+    :param n2v:
         The n/v ratio as defined in Annex 1-2 for the gear to 
         calc its `v_max` (if it exists). 
     :return:
@@ -84,22 +87,29 @@ def _calc_gear_v_max(
     """
     from . import formulae
 
-    df["v"] = df.index / gear_n2v_ratio
+    df["v"] = df.index / n2v
     df["p_road_loads"] = formulae.calc_road_load_power(df["v"], f0, f1, f2)
     df["p_remain"] = df[c_p_avail] - df["p_road_loads"]
-    initial_guess_v = df.index.max() / gear_n2v_ratio
-    p_max, res = _find_p_remain_root(
-        df[["v", "p_remain"]], initial_guess_v, method="halley", xtol=0.001
-    )
-    v_max = res.root if res.converged else np.NaN
+    initial_guess_v = df.index.max() / n2v
+    p_max, res = _find_p_remain_root(df[["v", "p_remain"]], initial_guess_v)
+
+    v_max = np.NAN
     if res.converged:
-        log.info(
-            "gear %s: , vmax: %s, p_remain: %s, nit: %s",
-            g,
-            v_max,
-            p_max,
-            res.iterations,
-        )
+        n = res.root * n2v
+        v_rounded = formulae.round1(res.root)
+        n_rounded = v_rounded * n2v
+        if df.index.min() <= n_rounded <= df.index.max():
+            v_max = res.root
+            ## Interpolate solved `n` in index.
+            #
+            df.loc[n, :] = np.NAN
+            df.loc[n_rounded, :] = np.NAN
+            df.interpolate()
+        elif n_rounded > df.index.max():
+            v_max = df.index.max() / n2v
+            # Do not interpolate solved `n`,
+            # it will extend wot beyond `pwot_n_max`.
+
     return GearVMaxRec(v_max, p_max, res, df)
 
 
@@ -130,29 +140,27 @@ def calc_v_max(
         """note: each arg is a list of items"""
         items1 = pd.DataFrame.from_dict({"v_max": v_maxes, "p_max": p_maxes})
         items2 = pd.DataFrame.from_records(vars(o) for o in optimize_results)[
-            [
-                "iterations",
-                "flag",
-                "iterations",
-            ]  # , "nfev", "njev"]  # for other solvers
+            ["converged", "flag", "iterations"]
         ]
-        items2.columns = "solver_ok solver_msg solver_nit".split()
+        items2.columns = "solver_ok  solver_msg  solver_nit".split()
         return pd.concat((items1, items2), axis=1)
 
     def _package_wots_df(wot_df, solution_dfs):
         _drop_maxv_common_columns(solution_dfs)
         wots_df = pd.concat(solution_dfs, axis=1, keys=range(0, ng + 1))
         wot_df[c_n] = wot_df.index
-        wots_df.index = wot_df.values
+        ###wots_df.index = wot_df.values
 
         return wots_df
 
     wot_df = make_xy_df(Pwots, xname=c_n, yname=c_p_wot, auto_transpose=True)
     wot_df[c_p_avail] = wot_df[c_p_wot] * (1.0 - f_safety_margin)
-    recs = [
-        _calc_gear_v_max(g, wot_df.copy(), c_p_avail, n2v, f0, f1, f2)
-        for g, n2v in enumerate(gear_n2v_ratios)
-    ]
+
+    recs: List[GearVMaxRec] = []
+    for g, n2v in reversed(list(enumerate(gear_n2v_ratios, 1))):
+        rec = _calc_gear_v_max(g, wot_df.copy(), c_p_avail, n2v, f0, f1, f2)
+        if not recs or recs[-1].v_max < rec.v_max:
+            recs.append(rec)
 
     *gears_infos, wot_solution_dfs = zip(*recs)
 
