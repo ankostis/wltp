@@ -7,8 +7,9 @@
 # You may obtain a copy of the Licence at: http://ec.europa.eu/idabc/eupl
 
 import logging
-from collections import namedtuple
-from typing import Union
+from collections import ChainMap, namedtuple
+from dataclasses import dataclass, field
+from typing import Any, Callable, Union
 
 import numpy as np
 import pandas as pd
@@ -16,14 +17,8 @@ from scipy import interpolate, optimize
 
 from .utils import make_xy_df
 
-
 log = logging.getLogger(__name__)
 
-#: Solution results of the equation finding the v-max of each gear:
-#:   - v_max, p_max: in kmh, kW, `Nan` if not found
-#:   - optimize_result: the ``scipy.optimize.root`` result structure
-#:   - wot_df: intermediate curves for solving the equation
-GearVMaxRec = namedtuple("GearVMaxRec", "v_max  p_max  optimize_result  wot_df")
 #: Global resulta for v-max.
 #:   - v_max, p_max: in kmh, kW, `Nan` if not found
 #:   - gears_df: intermediate scalars related to each gear (scalar-item x gear)
@@ -31,67 +26,129 @@ GearVMaxRec = namedtuple("GearVMaxRec", "v_max  p_max  optimize_result  wot_df")
 #:     with mult-indexed columns.  Gear-0 contains the common columns.
 VMaxRec = namedtuple("VMaxRec", "v_max  p_max  gears_df  wots_df")
 
+c_n, c_p_avail, c_p_wot = "n  p_avail  p_wot".split()
+c_v, c_p_road_loads, c_p_remain = "v  p_road_loads  p_remain".split()
 
-def _find_p_remain_root(pv: pd.DataFrame, initial_guess) -> optimize.OptimizeResult:
+
+@dataclass
+class GearVMax:
     """
-    Find the velocity (the "x") where power (the "y") gets to zero.
+    Solve :math:`P_{remain}(V) = 0` and store intermediate results to find the v-max of a gear:
 
-    :param pv: 
-        a 2-column dataframe for velocity & power, in that order.
-    :return:
-        optimization result (structure)
+    :ivar v_max: 
+        (output) in kmh, `Nan` if not found
+    :ivar  optimize_result: 
+        the ``scipy.optimize.root`` result structure
+    :wot_df: intermediate curves for solving the equation
     """
-    Spline = interpolate.UnivariateSpline
-    extrapolate_bounds = 3
-    rank = 1
 
-    V, P = pv.iloc[:, 0], pv.iloc[:, 1]
-    pv_curve = Spline(V, P, k=rank, ext=extrapolate_bounds)
-    pv_jacobian = Spline(V, np.gradient(P), k=rank, ext=extrapolate_bounds)
+    #### INPUT ####
+    #
+    #: A dataframe containing at least `c_p_avail` column in kW,
+    #: indexed by N in min^-1.
+    #:
+    #: NOTE: the power must already have been **reduced** by safety-margin,
+    wot_df: pd.DataFrame
+    #
+    gear_n2v_ratio: float
+    #
+    #: A callable calculating the power of road-load resistances
+    #: for a given velocity.
+    pv_road_loads_func: Callable[[Any], Any]
+    #
+    #: For initial guess.
+    n_rated: int
+    #
+    ###############
 
-    ## NOTE: the default 'hybr' method fails to find any root!
-    res = optimize.root(pv_curve, initial_guess, jac=pv_jacobian, method="broyden1")
+    ## Power interpolation
+    #
+    Spline = interpolate.InterpolatedUnivariateSpline
+    interp_args = {
+        # rank
+        "k": 1,
+        # extrapolate_type: 0(extend), 1(zero), 3(boundary value)
+        "ext": 0,
+    }
+    # merged on top of `interp_args`
+    derivative_interp_args = {"ext": 3}
 
-    if res.success:
-        return pv_curve(res.x), res
-    return None, res
+    ## Equation solver
+    #
+    solver_args = {
+        "method": "broyden1",
+        # Low tol because GTR requires 1 decimal point in V.
+        "tol": 0.001,
+    }
+
+    def _make_pv_interp(self, V, P):
+        return self.Spline(V, P, **self.interp_args)
+
+    def _make_derivative_pv_interp(self, V, P):
+        derivative_intrp_args = ChainMap(self.derivative_interp_args, self.interp_args)
+        return self.Spline(V, np.gradient(P), **derivative_intrp_args)
+
+    def _make_initial_guess(self) -> float:
+        return self.n_rated / self.gear_n2v_ratio
+
+    def _find_p_remain_root(self, pv: pd.DataFrame) -> optimize.OptimizeResult:
+        """
+        Find the velocity (the "x") where power (the "y") gets to zero.
+
+        :param pv: 
+            a 2-column dataframe for velocity & power, in that order.
+        :return:
+            optimization result (structure)
+        """
+        V, P = pv.iloc[:, 0], pv.iloc[:, 1]
+        self.pv_curve = self._make_pv_interp(V, P)
+        self.pv_derivative = self._make_derivative_pv_interp(V, P)
+
+        ## NOTE: the default 'hybr' method fails to find any root!
+        return optimize.root(
+            self.pv_curve,
+            x0=self._make_initial_guess(),
+            jac=self.pv_derivative,
+            **self.solver_args
+        )
+
+    def _calc_gear_v_max(
+        self, g, df: pd.DataFrame, c_p_avail, gear_n2v_ratio, f0, f1, f2
+    ):
+        """
+        The `v_max` for a gear `g` is the solution of :math:`0.1 * P_{avail}(g) = P_{road_loads}`.
+
+        :param df:
+            A dataframe containing at least `c_p_avail` column in kW,
+            indexed by N in min^-1.
+            NOTE: the power must already have been **reduced** by safety-margin,
+            
+            .. attention:: it appends columns in this dataframe.
+            
+        :param gear_n2v_ratio:
+            The n/v ratio as defined in Annex 1-2 for the gear to 
+            calc its `v_max` (if it exists). 
+
+        """
+
+        df[c_v] = df.index / gear_n2v_ratio
+        df[c_p_road_loads] = self.pv_road_loads_func(df[c_v])
+        df[c_p_remain] = df[c_p_avail] - df[c_p_road_loads]
+        res = self._find_p_remain_root(df[[c_v, c_p_remain]])
+        v_max = res.x if res.success else np.NaN
+        if res.success:
+            log.info(
+                "gear %s: , vmax: %s, p_remain: %s, nit: %s", g, v_max, p_max, res.nit
+            )
+        return GearVMaxRec(v_max, -1, res, df)
 
 
-def _calc_gear_v_max(
-    g, df: pd.DataFrame, c_p_avail, gear_n2v_ratio, f0, f1, f2
-) -> GearVMaxRec:
-    """
-    The `v_max` for a gear `g` is the solution of :math:`0.1 * P_{avail}(g) = P_{road_loads}`.
-
-    :param df:
-        A dataframe containing at least `c_p_avail` column in kW,
-        indexed by N in min^-1.
-        NOTE: the power must already have been **reduced** by safety-margin,
-        
-        .. attention:: it appends columns in this dataframe.
-        
-    :param gear_n2v_ratio:
-        The n/v ratio as defined in Annex 1-2 for the gear to 
-        calc its `v_max` (if it exists). 
-    :return:
-        a :class:`GearVMaxRec` namedtuple.
-
-    """
-    from . import formulae
-
-    df["v"] = df.index / gear_n2v_ratio
-    df["p_road_loads"] = formulae.calc_road_load_power(df["v"], f0, f1, f2)
-    df["p_remain"] = df[c_p_avail] - df["p_road_loads"]
-    initial_guess_v = df.index.max() / gear_n2v_ratio
-    p_max, res = _find_p_remain_root(df[["v", "p_remain"]], initial_guess_v)
-    v_max = res.x if res.success else np.NaN
-    if res.success:
-        log.info("gear %s: , vmax: %s, p_remain: %s, nit: %s", g, v_max, p_max, res.nit)
-    return GearVMaxRec(v_max, p_max, res, df)
+# TODO: get it from model
+f_safety_margin = 0.1
 
 
 def calc_v_max(
-    Pwots: Union[pd.Series, pd.DataFrame], gear_n2v_ratios, f0, f1, f2, f_safety_margin
+    Pwots: Union[pd.Series, pd.DataFrame], gear_n2v_ratios, pv_road_loads_func
 ) -> VMaxRec:
     """
     Finds the maximum velocity achieved by all gears.
@@ -109,11 +166,11 @@ def calc_v_max(
     c_n, c_p_avail, c_p_wot = "n  p_avail  p_wot".split()
     ng = len(gear_n2v_ratios)
 
-    def _drop_maxv_common_columns(dfs):
+    def _drop_maxv_common_columns(self, dfs):
         for df in dfs:
             df.drop(columns=[c_p_wot, c_p_avail], inplace=True)
 
-    def _package_gears_df(v_maxes, p_maxes, optimize_results):
+    def _package_gears_df(self, v_maxes, p_maxes, optimize_results):
         """note: each arg is a list of items"""
         items1 = pd.DataFrame.from_dict({"v_max": v_maxes, "p_max": p_maxes})
         items2 = pd.DataFrame.from_records(optimize_results)[
@@ -127,7 +184,7 @@ def calc_v_max(
         items2.columns = "solver_ok solver_status solver_msg solver_nit".split()
         return pd.concat((items1, items2), axis=1)
 
-    def _package_wots_df(wot_df, solution_dfs):
+    def _package_wots_df(self, wot_df, solution_dfs):
         _drop_maxv_common_columns(solution_dfs)
         wots_df = pd.concat(solution_dfs, axis=1, keys=range(0, ng + 1))
         wot_df[c_n] = wot_df.index
@@ -138,7 +195,12 @@ def calc_v_max(
     wot_df = make_xy_df(Pwots, xname=c_n, yname=c_p_wot, auto_transpose=True)
     wot_df[c_p_avail] = wot_df[c_p_wot] * (1.0 - f_safety_margin)
     recs = [
-        _calc_gear_v_max(g, wot_df.copy(), c_p_avail, n2v, f0, f1, f2)
+        GearVMax(
+            wot_df=wot_df.copy(),
+            gear_n2v_ratio=n2v,
+            pv_road_loads_func=pv_road_loads_func,
+            n_rated=n_rated,
+        )
         for g, n2v in enumerate(gear_n2v_ratios)
     ]
 
