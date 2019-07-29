@@ -52,18 +52,37 @@ def test_make_xy_df_simple(xy, xname, yname):
     _check_labels(res, xname, yname)
 
 
+def _DF(*args, idxname=None, **kwargs):
+    df = pd.DataFrame(*args, **kwargs)
+    df.index.name = idxname
+    return df
+
+
 @pytest.mark.parametrize(
     "make_xy_args, exp",
     [
-        (([1],), pd.DataFrame([1])),
-        (([1, 2, 3],), pd.DataFrame([[1], [2], [3]])),
-        (([1], None, "ab"), pd.DataFrame([1], columns=["ab"])),
+        (([1],), ValueError),
+        (pd.DataFrame(([1])), pd.DataFrame([1])),
+        (([1, 2, 3],), ValueError),
+        (pd.Series(([1, 2, 3])), pd.DataFrame([[1], [2], [3]])),
+        (([1], None, "ab"), ValueError),
+        ((pd.Series([1]), None, "ab"), pd.DataFrame([1], columns=["ab"])),
+        (([1], "X", None), ValueError),
+        ((pd.DataFrame([1]), "X", None), _DF([1], columns=[[0]], idxname="X")),
         (({"a": [1, 2]},), pd.DataFrame([[1], [2]], columns=["a"])),
-        (({"a": [1, 2]}, "X", "Y"), pd.DataFrame([[1], [2]], columns=["Y"])),
+        (({"a": [1, 2]}, "X", "Y"), _DF([[1], [2]], columns=["Y"], idxname="X")),
         (([[11, 12], [21, 22]],), pd.DataFrame([[11, 12], [21, 22]]).set_index(0)),
         (
             (pd.DataFrame({"YY": [11, 22], "extra": [0, 0], "XX": [3, 4]}), "XX", "YY"),
-            pd.DataFrame({"YY": [11, 22]}, index=[3, 4]),
+            _DF({"YY": [11, 22]}, index=[3, 4], idxname="XX"),
+        ),
+        (
+            (
+                _DF({"Y": [1, 2], "extra": [5, 6]}, index=[11, 22], idxname="XX"),
+                "XX",
+                "Y",
+            ),
+            _DF({"Y": [1, 2]}, index=[11, 22], idxname="XX"),
         ),
         ((pd.DataFrame({"YY": [11, 22], "extra": [0, 0], "XX": [3, 4]}),), ValueError),
     ],
@@ -78,6 +97,8 @@ def test_make_xy_df(make_xy_args, exp):
         assert exp.equals(res)
         assert res.columns == exp.columns
         assert (res.index == exp.index).all()
+        if exp.index.name is not None:
+            assert res.index.name == exp.index.name
 
 
 @pytest.mark.parametrize(
@@ -92,5 +113,5 @@ def test_make_xy_df_empties(xy, xname, yname, shape):
 
 @pytest.mark.parametrize("xy", [1, [[1, 2, 3], [3, 4, 5], [5, 6, 7]]])
 def test_make_xy_df_errors(xy, xname, yname):
-    with pytest.raises(ValueError, match="Invalid XY"):
+    with pytest.raises(ValueError):
         utils.make_xy_df(xy, xname, yname)

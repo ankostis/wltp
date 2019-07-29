@@ -135,41 +135,96 @@ def make_xy_df(data, xname=None, yname=None, auto_transpose=False):
     """
     import pandas as pd
 
+    def invalid_input_ex(df):
+        cols_msg = ", ".join(
+            f"{argname}={val!r}"
+            for argname, val in [("xname", xname), ("yname", yname)]
+            if val is not None
+        )
+        if cols_msg:
+            cols_msg = f" with {cols_msg}"
+        return ValueError(
+            f"Expected a df/series{cols_msg} (got type: {type(data)}), or 2 columns at most (got {ncols}: {df.columns})!"
+        )
+
     try:
         df = data if isinstance(data, pd.DataFrame) else pd.DataFrame(data)
 
-        if auto_transpose and not df.empty and df.shape[0] < df.shape[1]:
+        if auto_transpose and not df.empty and df.shape[0] < ncols:
             df = df.T
 
-        ## Handle empties
-        #
-        if df.shape[1] == 0:
+        has_index = isinstance(data, (pd.Series, pd.DataFrame))
+        ncols = df.shape[1]
+        if ncols == 0:
+            #
+            ## Handle empties
             if yname is None:
-                yname = 0  # default name for the 1st column
+                yname = 0  # default name for the 1st column.
             df[yname] = pd.np.NaN
-        else:
-            if df.shape[1] > 2:
-                if not xname == yname == None:
-                    if xname not in df.columns or yname not in df.columns:
-                        raise ValueError(
-                            f"Columns X={xname}, Y={yname} not found in {df.columns}"
-                        )
-                    else:
-                        df = df.loc[:, [xname, yname]]
-                        df.set_index(xname)
+        elif xname == yname == None:
+            if ncols > 2:
+                raise invalid_input_ex(df)
+            elif ncols == 1:
+                if not has_index:
+                    # Accept index as X only if given by user.
+                    raise invalid_input_ex(df)
+        elif xname is None and yname is not None:
+            if yname in df.columns:
+                y = df.loc[:, yname].to_frame()
+                if ncols == 2:
+                    y.index = df.drop(yname, axis=1).squeeze()
+                    df = y
+                elif has_index:
+                    df = y
                 else:
-                    raise ValueError(
-                        f"Expected 2 columns at most, not {df.shape[1]}: {df.columns}"
-                    )
-            if df.shape[1] == 2:
-                df = df.set_index(df.columns[0])
+                    raise invalid_input_ex(df)
+            elif ncols > 2 or not (ncols == 1 and has_index):
+                raise invalid_input_ex(df)
+        elif xname is not None and yname is None:
+            if xname in df.columns:
+                if ncols == 2:
+                    x = df.loc[:, xname]
+                    df = df.drop(xname, axis=1)
+                    df.index = x
+                else:
+                    raise invalid_input_ex(df)
+            elif ncols != 2:
+                raise invalid_input_ex(df)
+        elif yname in df.columns and xname in df.columns:
+            df = df.loc[:, [xname, yname]]
+            df.set_index(xname)
+        elif yname in df.columns and xname == df.index.name:
+            df = df.loc[:, yname].to_frame()
+        elif yname in df.columns:
+            y = df.loc[:, yname].to_frame()
+            if ncols == 2:
+                y.index = df.drop(yname, axis=1).squeeze()
+                df = y
+            elif has_index:
+                df = y
+            else:
+                raise invalid_input_ex(df)
+        elif xname in df.columns:
+            if ncols == 2:
+                x = df.loc[:, xname]
+                df = df.drop(xname, axis=1)
+                df.index = x
+            else:
+                raise invalid_input_ex(df)
+        elif ncols != 2 or not (ncols == 1 and has_index):
+            raise invalid_input_ex(df)
 
-            if yname is not None:
-                df.columns = [yname]
+        if df.shape[1] == 2:
+            df = df.set_index(df.columns[0])
+
+        if yname is not None:
+            df.columns = [yname]
 
         if xname is not None:
             df.index.name = xname
 
         return df
-    except Exception as ex:
+    except BrokenPipeError as ex:
+        if ex.args and ex.args[0].startswith("Expected a df/series"):
+            raise
         raise ValueError(f"Invalid XY input(type: {type(data)}), due to: {ex}") from ex
