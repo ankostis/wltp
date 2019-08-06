@@ -7,6 +7,7 @@
 # You may obtain a copy of the Licence at: http://ec.europa.eu/idabc/eupl
 
 import logging
+from typing import Sequence as Seq
 from typing import Tuple
 
 import numpy as np

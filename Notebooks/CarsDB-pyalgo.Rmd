@@ -21,7 +21,7 @@ with the *outputs* (`oprop`, `cycle`) from this *wltp* library.
 ### Cell tagged as `parameters` for *papermill*.
 #
 skip_h5_write = False
-del_h5_on_start = False
+del_h5_on_start = False  # overriden by `skip_h5_write=True`
 ```
 
 ```{python}
@@ -45,7 +45,7 @@ import numpy as np
 import pandas as pd
 from wltp.experiment import Experiment
 import wltp
-import wltp.utils as wutils
+from wltp import utils as wutils, io as wio
 
 ## Add tests/ into `sys.path` to import `vehdb` module.
 #
@@ -74,12 +74,16 @@ c_n, c_p, c_n_norm, c_p_norm = 'n', 'Pwot', 'n_norm', 'p_norm'
 
 ```{python}
 ## UNCOMMENT next command & run to DELETE the db-file, and rebuild it.
-if del_h5_on_start:
+if not skip_h5_write and del_h5_on_start:
     !rm -f {out_h5fname}
 ```
 
 ```{python}
 vehdb.print_nodes(out_h5fname)
+```
+
+```{python}
+# %pdb off
 ```
 
 ```{python}
@@ -119,12 +123,12 @@ def store_python_results(
             return
 
         g = vehdb.vehnode(vehnum, props_group_suffix)
-        h5db.put(g, pd.Series(oprops))
-        vehdb.provenir_h5node(h5db, g, title="Wltp-run generated old pghase-1a python")
+        h5db.put(g, pd.DataFrame({k: [v] for k, v in oprops.items()}, index=[vehnum]))
+        vehdb.provenir_h5node(h5db, g, title="Pyalgo generated")
 
         g = vehdb.vehnode(vehnum, cycle_group_suffix)
         h5db.put(g, cycle_run)
-        vehdb.provenir_h5node(h5db, g, title="Wltp-run generated old phase-1a python")
+        vehdb.provenir_h5node(h5db, g, title="Pyalgo generated")
 
     for vehnum, (oprops, cycle_run) in vehdb.do_h5(inph5, run_vehicles_with_pythons):
         vehdb.do_h5(outh5, store_vehicles, vehnum, oprops, cycle_run)
