@@ -65,6 +65,9 @@ class PhaseMarker:
     #: The vehicle is stopped when its velocity is below this number (in kmh),
     #: by Annex 2-4 this is 1.0 kmh.
     running_threshold: float = 1.0
+    #: The vehicle is cruising if accel/decel within ±0.5 km/h/s or ±0.1389m/s/s
+    #: (after 20/09/2019).
+    cruise_threshold: float = 0.1389
 
     #: (positive) consider *at least* that many conjecutive samples as
     #: belonging to a `long_{stop/acc/cruise/dec}` generated column,
@@ -184,9 +187,9 @@ class PhaseMarker:
         ## Driveability rule phases
         #
         cycle[c.stop] = ~RUN
-        cycle[c.accel] = phase(RUN & cycle[c.accel_raw])
-        cycle[c.cruise] = phase(RUN & (A == 0))
-        cycle[c.decel] = phase(RUN & ~cycle[c.accel_raw])
+        cycle[c.accel] = RUN & (A > self.cruise_threshold)
+        cycle[c.cruise] = RUN & (A.abs() <= self.cruise_threshold)
+        cycle[c.decel] = RUN & (A < -self.cruise_threshold)
 
         cycle[c.initaccel] = self._accel_after_init(V, cycle[c.accel_raw])
         cycle[c.stopdecel] = self._decel_before_stop(cycle[c.decel], cycle[c.stop])
