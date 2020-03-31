@@ -22,7 +22,7 @@ Gear selection and shift point determination for vehicles equipped with manual t
 
     It was an attempt to transcribe the :term:`GTR` in :term:`sphinx`,
     in order to track changes in *git*.
-    
+
 General approach
 ----------------
 
@@ -353,6 +353,3 @@ Discussion
         })();
     </script>
     <noscript>Please enable JavaScript to view the <a href="http://disqus.com/?ref_noscript">comments powered by Disqus.</a></noscript>
-
-.. include:: ../README.rst
-    :start-after: _begin-replacements:

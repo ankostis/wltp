@@ -18,4 +18,5 @@
     genindex
 
 .. include:: ../README.rst
-    :start-after: _begin-replacements:
+    :start-after: _badges-replacements:
+:

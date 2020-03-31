@@ -150,6 +150,30 @@ doctest_test_doctest_blocks = "default"
 
 autosectionlabel_prefix_document = True
 
+rst_epilog = r"""
+.. |br| raw:: html
+
+   <br />
+
+.. |CO2| replace:: CO\ :sub:`2`
+
+.. |virtualenv| replace::  *virtualenv* (isolated Python environment)
+.. _virtualenv: http://docs.python-guide.org/en/latest/dev/virtualenvs/
+
+.. |binder| image:: https://mybinder.org/badge_logo.svg
+    :target: https://mybinder.org/v2/gh/JRCSTU/wltp/master?urlpath=lab/tree/Notebooks/README.md
+    :alt: JupyterLab for WLTP
+
+.. |pypi| replace:: *PyPi* repo
+.. _pypi: https://pypi.python.org/pypi/wltp
+
+.. |winpython| replace:: *WinPython*
+.. _winpython: http://winpython.github.io/
+
+.. |anaconda| replace:: *Anaconda*
+.. _anaconda: http://docs.continuum.io/anaconda/
+"""
+
 # Add any paths that contain templates here, relative to this directory.
 templates_path = ["_templates"]
 

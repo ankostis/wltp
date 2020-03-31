@@ -753,7 +753,7 @@ The typical development procedure is like this:
 6. Repeat this cycle for other bugs/enhancements.
 7. When you are finished, push the changes upstream to *github* and make a *merge_request*.
    You can check whether your merge-request indeed passed the tests by checking
-   its build-status |travis-status| on the integration-server's site (TravisCI).
+   its build-status on the integration-server's site (TravisCI & Appveyor).
 
    .. Hint:: Skim through the small IPython developer's documentation on the matter:
         `The perfect pull request <https://github.com/ipython/ipython/wiki/Dev:-The-perfect-pull-request>`_
@@ -774,12 +774,12 @@ Development team
     * Eckhard Schlichte (discussions & advice)
 
 
-.. _begin-glossary:
 
 Glossary
 ========
 See also :ref:`architecture:Architecture`.
 
+.. _begin-glossary:
 .. default-role:: term
 
 .. glossary::
@@ -877,7 +877,11 @@ See also :ref:`architecture:Architecture`.
         which contain code in various languages, text (using Markdown), mathematics, plots and
         rich media, usually ending with the ".ipynb" extension.
 
-.. _begin-replacements:
+.. _end-glossary:
+.. Substs that exist also in `rst_epilog`.
+.. |travis-status| image:: https://travis-ci.org/JRCSTU/wltp.svg
+    :alt: Travis continuous integration testing ok? (Linux)
+    :target: https://travis-ci.org/JRCSTU/wltp/builds
 
 .. |br| raw:: html
 
@@ -892,18 +896,7 @@ See also :ref:`architecture:Architecture`.
     :target: https://mybinder.org/v2/gh/JRCSTU/wltp/master?urlpath=lab/tree/Notebooks/README.md
     :alt: JupyterLab for WLTP
 
-.. |pypi| replace:: *PyPi* repo
-.. _pypi: https://pypi.python.org/pypi/wltp
-
-.. |winpython| replace:: *WinPython*
-.. _winpython: http://winpython.github.io/
-
-.. |anaconda| replace:: *Anaconda*
-.. _anaconda: http://docs.continuum.io/anaconda/
-
-.. |travis-status| image:: https://travis-ci.org/JRCSTU/wltp.svg
-    :alt: Travis continuous integration testing ok? (Linux)
-    :target: https://travis-ci.org/JRCSTU/wltp/builds
+.. _badges-replacements:
 
 .. |appveyor-status| image:: https://ci.appveyor.com/api/projects/status/0e2dcudyuku1w1gd?svg=true
     :alt: Appveyor continuous integration testing ok? (Windows)

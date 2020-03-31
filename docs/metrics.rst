@@ -7,7 +7,7 @@ Tests, Metrics & Reports
 .. Attention::
     This section is very outdated (late 2014)!
     It will be re-written based on :term:`jupyter notebook`\s.
-    
+
     For now, launch the demo server(|binder|), open & run the :file:`CarsDB-compare.ipynb` notebook,
     and start comparing vehicles between *AccDB* <--> *PyAlgo*, *interactively*:
 
@@ -84,6 +84,3 @@ Discussion
         })();
     </script>
     <noscript>Please enable JavaScript to view the <a href="http://disqus.com/?ref_noscript">comments powered by Disqus.</a></noscript>
-
-.. include:: ../README.rst
-    :start-after: _begin-replacements:

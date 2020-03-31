@@ -4,7 +4,7 @@
 
 .. include:: ../README.rst
     :start-after: _begin-glossary:
-    :end-before: _begin-replacements:
+    :end-before: _badges-replacements:
 
 Discussion
 ----------
@@ -25,7 +25,3 @@ Discussion
         })();
     </script>
     <noscript>Please enable JavaScript to view the <a href="http://disqus.com/?ref_noscript">comments powered by Disqus.</a></noscript>
-
-
-.. include:: ../README.rst
-    :start-after: _begin-replacements:
