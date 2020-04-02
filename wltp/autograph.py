@@ -122,11 +122,10 @@ class FnHarvester(Prefkey):
 
     >>> modules = (cycler, downscale, engine, vehicle, vmax)
     >>> funcs = FnHarvester(
-    ...     include_methods=False,
     ...     predicate=_is_in_my_project
     ... ).harvest(*modules)
     >>> len(funcs)
-    66
+    67
     >>> sorted(list(zip(*funcs))[0])
     [('wltp.cycler', 'CycleBuilder'),
      ('wltp.cycler', 'NMinDrives'),
@@ -140,6 +139,7 @@ class FnHarvester(Prefkey):
     ...     "timelens "
     ... ).split()
     >>> funcs = FnHarvester(
+    ...     include_methods=True,
     ...     excludes=(excludes),
     ...     base_modules=modules
     ... ).harvest()
@@ -161,7 +161,7 @@ class FnHarvester(Prefkey):
         excludes: Iterable[_FnKey] = None,
         base_modules: Iterable[Union[ModuleType, str]] = None,
         predicate: Callable[[Any], bool] = None,
-        include_methods=True,
+        include_methods=False,
         sep=None,
     ):
         super().__init__(sep)

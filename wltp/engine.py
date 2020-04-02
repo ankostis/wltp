@@ -18,6 +18,7 @@ from scipy import interpolate
 
 from . import invariants as inv
 from . import io as wio
+from .autograph import autographed
 from .invariants import Column
 
 log = logging.getLogger(__name__)
@@ -152,7 +153,6 @@ def validate_wot(
 ) -> pd.DataFrame:
     """Higher-level validation of the wot-curves with respect to model."""
     w = wio.pstep_factory.get().wot
-    d = wio.pstep_factory.get().wot
 
     if wot.shape[0] < 3:
         yield ValidationError(
@@ -199,18 +199,18 @@ def preproc_wot(mdl: Mapping, wot) -> pd.DataFrame:
 
     see  :func:`parse_wot()`
     """
-    d = wio.pstep_factory.get()
+    m = wio.pstep_factory.get()
 
     wot = parse_wot(wot)
 
-    n_idle = mdl[d.n_idle]
-    n_rated = mdl[d.n_rated]
-    p_rated = mdl[d.p_rated]
+    n_idle = mdl[m.n_idle]
+    n_rated = mdl[m.n_rated]
+    p_rated = mdl[m.p_rated]
 
     wot = denorm_wot(wot, n_idle, n_rated, p_rated)
     wot = norm_wot(wot, n_idle, n_rated, p_rated)
 
-    for err in validate_wot(wot, n_idle, n_rated, p_rated, mdl.get(d.n_min_drive_set)):
+    for err in validate_wot(wot, n_idle, n_rated, p_rated, mdl.get(m.n_min_drive_set)):
         raise err
 
     return wot
@@ -366,6 +366,7 @@ def calc_p_avail_in_gwots(gwots, *, SM) -> pd.DataFrame:
     return gwots
 
 
+@autographed(provides=["n95_low", "n95_high"])
 def calc_n95(wot: pd.DataFrame, n_rated: int, p_rated: float) -> Tuple[float, float]:
     """
     Find wot's n95_low/high (Annex 2-2.g).
@@ -454,6 +455,7 @@ NMinDrives = namedtuple(
 )
 
 
+## TODO: DEL
 def calc_fixed_n_min_drives(mdl: Mapping, n_idle: int, n_rated: int) -> NMinDrives:
     """
     Calculate minimum revolutions according to Annex 2-2.k.
@@ -490,6 +492,7 @@ def calc_fixed_n_min_drives(mdl: Mapping, n_idle: int, n_rated: int) -> NMinDriv
         t_cold_end=t_cold_end,
     )
 
+    # Round them all, according to 2-2.k.
     nmins = NMinDrives(*(n and inv.nround1(n) for n in nmins))
 
     return nmins

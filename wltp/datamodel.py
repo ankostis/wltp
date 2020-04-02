@@ -35,7 +35,7 @@ from pandas.core.generic import NDFrame
 
 from . import engine
 from . import io as wio
-from . import utils
+from . import nmindrive, utils
 from .cycles import class1, class2, class3
 
 try:
@@ -988,30 +988,16 @@ def yield_n_min_errors(mdl):
             f"n_idle({mdl[d.n_idle]}) is higher than n_rated({mdl[d.n_rated]}!"
         )
 
-    try:
-        nmins = engine.calc_fixed_n_min_drives(mdl, mdl[d.n_idle], mdl[d.n_rated])
-        for n in (
-            d.n_min_drive_up,
-            d.n_min_drive_up_start,
-            d.n_min_drive_down,
-            d.n_min_drive_down_start,
-        ):
-            n_mdl = mdl.get(n)
-            if n_mdl is not None:
-                if n_mdl < nmins.n_min_drive_set:
-                    yield ValidationError(
-                        f"`{n}`({n_mdl}) must be higher than `{d.n_min_drive_set}`({nmins.n_min_drive_set})!"
-                    )
-                if n_mdl > 2 * nmins.n_min_drive_set:
-                    yield ValidationError(
-                        f"`{n}`({n_mdl}) must be lower than 2 x `{d.n_min_drive_set}`({nmins.n_min_drive_set})!"
-                    )
+    from .nmindrive import mdl_2_n_min_drives
 
-        for k, v in nmins._asdict().items():
-            mdl[k] = v
+    sol = mdl_2_n_min_drives.compute(mdl, "n_min_drives")
+    ex = sol.check_if_incomplete()
+    if ex:
+        yield ex
+    nmins = sol["n_min_drives"]
 
-    except PandasError as ex:
-        yield ValidationError("Invalid n_mins, due to: %s" % ex, cause=ex)
+    for k, v in nmins._asdict().items():
+        mdl[k] = v
 
 
 def yield_forced_cycle_errors(mdl, additional_properties):
