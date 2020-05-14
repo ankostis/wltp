@@ -198,10 +198,10 @@ def extract_scale_trace_inputs(
     case_no: int, mat_db: Dict[str, pd.DataFrame], **overrides
 ) -> dict:
     """
-    Return an ordered dictionary with (pandas) values for mat-function `scaleTrace.m`. 
-    
+    Return an ordered dictionary with (pandas) values for mat-function `scaleTrace.m`.
+
     :return:
-        data are regular pandas 
+        data are regular pandas
         (apply :func:`columnize_pandas()` before calling matlab)
     """
 
@@ -386,3 +386,31 @@ case_traces = pd.concat(
     case_traces.values(), keys=case_traces.keys(), names=["case", "t"]
 )
 case_traces.sample(nsamples).sort_index()
+
+# %% [markdown]
+# ## Result items (so far)
+# ```
+# - scale_scalars
+# - phase_sums
+# - case_traces
+# ```
+# (all `pd.DataFrames`)
+
+# %%
+# !ls ../VehData
+
+# %%
+py_h5 = "../VehData/WltpGS-pyalgo.h5"
+acc_h5 = "../VehData/WltpGS-msaccess.h5"
+case_no = 1
+acc_db = vehdb.load_vehicle_accdb(acc_h5, case_no)
+py_db = vehdb.load_vehicle_pyalgo(py_h5, case_no)
+
+# %%
+display("PY: ", py_db.df.v_target.sum())
+display(case_traces.loc[1, 1].sum())
+
+# %%
+scale_results
+
+# %%

@@ -10,9 +10,8 @@ Defines schema, defaults and validations for data consumed/produced by :class:`~
 
 The datamodel-instance is managed by :class:`pandel.Pandel`.
 
-.. testsetup::
-
-  from wltp.datamodel import *
+>>> from wltp.datamodel import *
+>>> __name__ = "wltp.datamodel"
 """
 
 import copy
@@ -37,6 +36,7 @@ from pandalone.pandata import PandelVisitor
 from . import engine
 from . import io as wio
 from . import nmindrive, utils
+from .autograph import autographed
 from .cycles import class1, class2, class3
 
 try:
@@ -700,11 +700,12 @@ def get_class_names(mdl=None) -> pd.DataFrame:
     return list(wltc_data["classes"].keys())
 
 
-def get_class(class_id: Union[str, int], mdl=None) -> dict:
+@autographed(needs="wltc_class", provides="wltc_class_data")
+def get_class(wltc_class: Union[str, int], mdl=None) -> dict:
     """
     Fetch the wltc-data for a specific class.
 
-    :param class_id:
+    :param wltc_class:
         one of 'class1', ..., 'class3b' or its index 0,1, ... 3
     """
     if mdl:
@@ -713,14 +714,15 @@ def get_class(class_id: Union[str, int], mdl=None) -> dict:
         wltc_data = get_wltc_data()
 
     classes = wltc_data["classes"]
-    if isinstance(class_id, int):
-        class_name = list(classes.keys())[class_id]
+    if isinstance(wltc_class, int):
+        class_name = list(classes.keys())[wltc_class]
     else:
-        class_name = class_id
+        class_name = wltc_class
 
     return classes[class_name]
 
 
+@autographed(needs="wltc_class")
 def get_class_parts_limits(wltc_class: Union[str, int], edges=False):
     """
     Parses the supplied in wltc_data and extracts the part-limits for the specified class-name.

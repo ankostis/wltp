@@ -13,6 +13,7 @@ import pandas as pd
 
 from . import invariants as inv
 from . import io as wio
+from .autograph import autographed
 
 log = logging.getLogger(__name__)
 

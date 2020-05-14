@@ -42,8 +42,8 @@
 /f2
 /f_dsc
 /f_dsc_decimals
-/f_dsc_threshold
 /f_dsc_orig
+/f_dsc_threshold
 /f_inertial
 /f_safety_margin
 /g_vmax

@@ -18,6 +18,7 @@ from scipy import interpolate
 
 from . import invariants as inv
 from . import io as wio
+from .autograph import autographed
 from .nmindrive import NMinDrives
 from .invariants import Column
 
@@ -270,6 +271,7 @@ def _make_v_grid(v_wot_min: float, v_wot_max: float) -> np.ndarray:
     return V_grid
 
 
+@autographed(provides="gwots")
 def interpolate_wot_on_v_grid(wot: pd.DataFrame, n2v_ratios) -> pd.DataFrame:
     """
     Return a new linearly interpolated df on v with inv.v_decimals.
@@ -340,7 +342,7 @@ def interpolate_wot_on_v_grid(wot: pd.DataFrame, n2v_ratios) -> pd.DataFrame:
     return wot_grid
 
 
-def calc_p_avail_in_gwots(gwots, *, SM) -> pd.DataFrame:
+def attach_p_avail_in_gwots(gwots: pd.DataFrame, *, SM) -> pd.DataFrame:
     """
     .. attention:
         Must not interpolate along with wot on grid, or great INNACCURACIES.
@@ -366,6 +368,7 @@ def calc_p_avail_in_gwots(gwots, *, SM) -> pd.DataFrame:
     return gwots
 
 
+@autographed(provides=["n95_low", "n95_high"])
 def calc_n95(wot: pd.DataFrame, n_rated: int, p_rated: float) -> Tuple[float, float]:
     """
     Find wot's n95_low/high (Annex 2-2.g).

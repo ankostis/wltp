@@ -12,7 +12,10 @@ from typing import Union
 import numpy as np
 import pandas as pd
 
+
 from . import io as wio
+from . import vehicle
+from .autograph import autographed
 from .invariants import Column
 
 log = logging.getLogger(__name__)
@@ -41,6 +44,13 @@ def calc_p_resist(V: Column, f0, f1, f2):
     return (f0 * V + f1 * VV + f2 * VVV) / 3600.0
 
 
+def attach_p_resist_in_gwots(gwots: pd.DataFrame, f0, f1, f2):
+    w = wio.pstep_factory.get().wot
+    gwots[w.p_resist] = vehicle.calc_p_resist(gwots.index, f0, f1, f2)
+    return gwots
+
+
+@autographed(provides="p_inert")
 def calc_inertial_power(V, A, test_mass, f_inertial):
     """
     @see: Annex 2-3.1
@@ -48,6 +58,7 @@ def calc_inertial_power(V, A, test_mass, f_inertial):
     return (A * V * test_mass * f_inertial) / 3600.0
 
 
+@autographed(provides="p_req")
 def calc_required_power(p_resist: Column, p_inert: Column):
     """
     Equals :math:`road_loads + inertial_power`

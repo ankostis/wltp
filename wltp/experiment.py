@@ -47,6 +47,9 @@ _GEARS_YES:  boolean (#gears X #cycle_steps)
     One row per gear having ``True`` wherever gear is possible for each step.
 
 .. Seealso:: :mod:`~,datamodel` for in/out schemas
+
+>>> from wltp.experiment import *
+>>> __name__ = "wltp.experiment"
 """
 
 import logging
@@ -57,35 +60,126 @@ from typing import Union
 import numpy as np
 import pandas as pd
 
-from . import (
-    io as wio,
-    cycles,
-    invariants,
-    nmindrive,
-    vehicle,
-    engine,
-    vmax,
-    downscale,
-    datamodel,
-    cycler,
-)
+from graphtik import compose
+from graphtik.pipeline import Pipeline
+
+from . import cycler, cycles, datamodel, downscale, engine, invariants
+from . import io as wio
+from . import nmindrive, vehicle, vmax
+from .autograph import Autograph, FnHarvester, autographed
 from .invariants import v_decimals, vround
 
 log = logging.getLogger(__name__)
 
 
-def _shapes(*arrays):
-    import operator
+@autographed(provides=["dsc_phases", "wltc_dsc_p_max_values", "wltc_dsc_coeffs"])
+def get_downscaling_data(wltc_class_data: dict) -> tuple:
+    dsc_data = wltc_class_data["downscale"]
+    phases = dsc_data["phases"]
+    p_max_values = dsc_data["p_max_values"]
+    wltc_dsc_coeffs = dsc_data["factor_coeffs"]
+    return phases, p_max_values, wltc_dsc_coeffs
 
-    op_shape = operator.attrgetter("shape")
-    return list(map(op_shape, arrays))
+
+def _compose_scale_trace() -> Pipeline:
+    hv = FnHarvester(
+        # base_modules=["wltp.experiment", engine, vehicle, nmindrive, downscale],
+        excludes=["calc_mro", "calc_default_resistance_coeffs",],
+    )
+    hv.harvest(
+        get_downscaling_data,
+        datamodel.get_wltc_data,
+        datamodel.get_class,
+        vehicle.calc_unladen_mass,
+        vehicle.calc_p_m_ratio,
+        engine.interpolate_wot_on_v_grid,
+        engine.attach_p_avail_in_gwots,
+        vehicle.attach_p_resist_in_gwots,
+        vmax.calc_v_max,
+        downscale.calc_f_dsc_orig,
+        downscale.calc_f_dsc,
+        downscale.decide_wltc_class,
+        downscale.calc_v_dsc,
+        nmindrive.mdl_2_n_min_drives,
+    )
+    funcs = hv.collected
+    aug = Autograph(
+        [
+            "get_",
+            "calc_",
+            "upd_",
+            "create_",
+            "decide_",
+            re.compile(r"\battach_(\w+)_in_(\w+)$"),
+        ]
+    )
+    ops = [aug.wrap_fn(fn, name) for name, fn in funcs]
+    return compose("scale_trace", *ops)
 
 
-def _dtypes(*arrays):
-    import operator
+# TODO: create *lazily* pipeline module-attribute.
+scale_trace = _compose_scale_trace()
+"""
+The main pipeline:
 
-    op_shape = operator.attrgetter("dtype")
-    return list(map(op_shape, arrays))
+.. graphtik::
+    :height: 600
+    :hide:
+    :name: scale_trace
+
+    >>> netop = scale_trace
+
+**Example:**
+
+
+>>> mdl = {"n_idle": 500, "n_rated": 3000, "p_rated": 80, "t_cold_end": 470}
+"""
+
+
+def create_cycle(forced_cycle: pd.DataFrame = None) -> pd.DataFrame:
+    """Gets a forced-cycle from model or creates an empty dataframe."""
+    c = wio.pstep_factory.get().cycle
+
+    if forced_cycle is None:
+        cycle = pd.DataFrame()
+    else:
+        log.info(
+            "Found forced `cycle-run` table(%ix%i).", cycle.shape[0], cycle.shape[1]
+        )
+        if not isinstance(cycle, pd.DataFrame):
+            cycle = pd.DataFrame(forced_cycle)
+
+    ## Ensure Time-steps start from 0 (not 1!).
+    #
+    cycle.reset_index()
+    cycle.index.name = c.t
+
+    return cycle
+
+
+def _compose_scale_trace_ALLL() -> Pipeline:  # type: ignore
+    hv = FnHarvester(
+        # base_modules=["wltp.experiment", engine, vehicle, nmindrive, downscale],
+        excludes=["calc_mro", "calc_default_resistance_coeffs"],
+    )
+    hv.harvest(engine, vehicle, base_modules=[engine, vehicle])
+    hv.harvest(engine, vehicle, base_modules=[engine, vehicle])
+    hv.harvest(
+        datamodel.get_wltc_data,
+        datamodel.get_class,
+        datamodel.get_class_parts_limits,
+        create_cycle,
+        get_downscaling_data,
+        vmax.calc_v_max,
+        downscale.calc_f_dsc,
+        downscale.decide_wltc_class,
+        downscale.calc_v_dsc,
+        nmindrive.mdl_2_n_min_drives,
+    )
+    funcs = hv.collected
+    aug = Autograph(["get_", "calc_", "upd_", "create_", "decide_"])
+    ops = [aug.wrap_fn(fn, name) for name, fn in funcs]
+    return compose("scale_trace", *ops)
 
 
 class Experiment(object):
@@ -174,7 +268,7 @@ class Experiment(object):
         f_safety_margin = mdl[m.f_safety_margin]
 
         gwots = engine.interpolate_wot_on_v_grid(wot, gear_ratios)
-        gwots = engine.calc_p_avail_in_gwots(gwots, SM=f_safety_margin)
+        gwots = engine.attach_p_avail_in_gwots(gwots, SM=f_safety_margin)
         gwots[w.p_resist] = vehicle.calc_p_resist(gwots.index, f0, f1, f2)
 
         v_max_rec = vmax.calc_v_max(gwots)
@@ -234,9 +328,7 @@ class Experiment(object):
                     f_inertial,
                 )
                 f_dsc = downscale.calc_f_dsc(
-                    f_dsc_orig,
-                    f_dsc_threshold,
-                    f_dsc_decimals,
+                    f_dsc_orig, f_dsc_threshold, f_dsc_decimals,
                 )
                 mdl[m.f_dsc] = f_dsc
                 mdl[m.f_dsc_orig] = f_dsc_orig
