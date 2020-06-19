@@ -12,7 +12,8 @@ from itertools import chain, islice
 from typing import Collection, List
 
 import numpy as np
-from scipy.signal import butter, filtfilt
+import pandas as pd
+from scipy import interpolate, signal
 
 import chippy
 
@@ -40,8 +41,10 @@ def calc_mean_window_len(sample_rate, cut_off_frequency_hz) -> float:
     freqRatio = cut_off_frequency_hz / sample_rate
     return np.sqrt(0.196201 + freqRatio ** 2) / freqRatio
 
+
 def rms(x):
-    return np.sqrt(x.dot(x)/x.size)
+    return np.sqrt(x.dot(x) / x.size)
+
 
 class Synthesizer(chippy.Synthesizer):
     """
@@ -60,100 +63,118 @@ class Synthesizer(chippy.Synthesizer):
             envelope = np.fromiter(envelope, dtype=np.float32, count=num_bytes)
         return wave * envelope
 
-    def save_wave(self, signal, file_name):
+    def save_wave(self, sig, file_name):
         """Convert [-1, 1] floats --> bytes if (not already)."""
-        if isinstance(signal, np.ndarray):
+        if isinstance(sig, np.ndarray):
             dtype = f"<i{self._bits // 8}"
-            signal = (signal * self._amplitude_scale).astype(dtype).tobytes()
+            sig = (sig * self._amplitude_scale).astype(dtype).tobytes()
 
-        super().save_wave(signal, file_name)
+        super().save_wave(sig, file_name)
 
 
 @dataclass
 class CycleAudio:
     #: (REQUIRED) The cycle's velocity trace.
-    cycle: Collection[float] = field(repr=False)
+    cycle: pd.Series = field(repr=False)
     #: (REQUIRED) Desired duration of the "cycle clip".
     clip_duration_sec: int
     #: Derrived field.
     cycle_samples_count: int
     #: Derrived from given cycle, minus -1 (see :ref:`begin-annex`).
     cycle_duration_sec: int
-    #: Derrived field.
-    clip_samples_count: int
+    #: (d)errived) How many V samples to pick from the cycle as audio pitches.
+    #: Calculated based on :attr:`min_audible_duration_sec` and cycle-duration.
+    v_samples_count: int
     #: Derrived field.
     cycle_sample_distance: int
+    dtype: np.dtype
+    bit_depth: int = 32
+    sample_rate: int = 44100
     #: (optional) Derrived by :func:`running_mean_window_len` if not given.
-    running_mean_window_len: int
-    #: (Optional) Instance controlling audio sample-rate, etc, constructed
-    #: with :attr:`amplitude` if not given.
-    synth: Synthesizer = field(repr=False)
-    #: A filter to eradicate "clicks" on the seams between the different cycle-samples.
-    #: A Buteworth if not given.
-    seam_filter: Synthesizer = field(repr=False)
     #: Pick samples from cycle every that often.
     #: If it is too small, sound-signal will be distorted ala "modem".
-    min_audible_duration_sec: float = 0.02
+    #: If 0.0166665 for taking all samples of 1800sec cylce --> 30sec clip.
+    min_audible_duration_sec: float = 0.1
     #: How loud?  Passed to :attr:`synth`, ignored if `synth` arg given.
     amplitude: float = 0.3
-    #: Multiply :attr:`cycle` by that factor to produce the audible pitch.
-    freq_shift: int = 10
-    #: Butterworth cutoff frequency (against sampling rate, e.g. 3kHz for 44Khz sampling).
+    #: FM carrier for the audible pitch.
+    carrier_frequency: int = 300
+    #: A Butterworth cutoff frequency (against sampling rate, e.g. 3kHz for 44Khz sampling)
+    #: A filter to eradicate "notches" on the seams between the different cycle-samples.
     cut_off_frequency: float = 1800
     #: (optional) if no :attr:`seam_filter` given, this is the Butterworth order
-    #: applied with :func:`.filtfilt` (so this number is half of the effective order).
-    seam_filter_order: int = 8
+    #: applied with :func:`.signal.filtfilt` (so this number is half of the effective order).
+    lowband_filter_order: int = 8
+    #: Limit signal to F x RMS(sig), to generate more frequencies
+    #: (instead of triangular wave).
+    rms_limiter_factor = 0.666
 
     def __init__(self, cycle, clip_duration_sec, **kw):
         vars(self).update(cycle=cycle, clip_duration_sec=clip_duration_sec, **kw)
+        self.dtype = f"<i{self.bit_depth // 8}"
         self.cycle_samples_count = len(self.cycle)
         self.cycle_duration_sec = self.cycle_samples_count - 1
-        self.clip_samples_count = int(
+        self.v_samples_count = int(
             self.clip_duration_sec / self.min_audible_duration_sec
         )
-        self.cycle_sample_distance = int(
-            self.cycle_samples_count / self.clip_samples_count
+        self.clip_samples_count = self.sample_rate * self.clip_duration_sec
+        # TODO: DELETE; Rounding causes approximate clip-duration.
+        self.cycle_sample_distance = min(
+            1, int(self.cycle_samples_count / self.v_samples_count)
         )
-        if self.cycle_sample_distance < 1:
-            self.cycle_sample_distance = 1
 
         if "synth" not in kw:
             self.synth: Synthesizer = Synthesizer(amplitude=self.amplitude)
 
-        nyquist_freq = self.synth.framerate / 2
-        # if "running_mean_window_len" not in kw:
-        #     self.running_mean_window_len = int(
-        #         calc_mean_window_len(self.synth.framerate, self.cut_off_frequency * nyquist_freq)
-        #     )
-        if "seam_filter" not in kw:
-            self.seam_filter = butter(self.seam_filter_order, self.cut_off_frequency, fs=self.synth.framerate)
+    def fm_wave(self, modulator):
+        modulation = (
+            2.0
+            * np.pi
+            * modulator.index
+            * (self.carrier_frequency * (120 + 0.2 * modulator))
+            / self.sample_rate
+        )
+        wave = self.amplitude * signal.square(modulation)
+        wave[modulator == 0] = 0
+        return wave
 
-    def _filter_seam_clicks(self, signal: np.ndarray) -> np.ndarray:
-        """Filter close to sampling frequency to remove "clicks" of signal seams. """
+    def _filter_low_pass(self, sig: np.ndarray) -> np.ndarray:
+        """Low-pass & nothc filter to remove "clicks" of signal seams. """
         # return running_mean(signal, self.running_mean_window_len)
-        return filtfilt(*self.seam_filter, signal)
-        # return signal
+        low_filter = signal.butter(
+            self.lowband_filter_order,
+            self.cut_off_frequency,
+            fs=self.synth.framerate,
+            output="sos",
+        )
+        return signal.sosfilt(low_filter, sig)
 
-    def _limit_to_rms(self, signal: np.ndarray) -> np.ndarray:
-        limit = rms(signal)
-        signal[signal > limit] = limit
-        signal[signal < -limit] = -limit
+    def _limit_to_rms(self, sig: np.ndarray, f_rms) -> np.ndarray:
+        limit = f_rms * rms(sig)
+        sig[sig > limit] = limit
+        sig[sig < -limit] = -limit
+
+    def make_v_pitch_samples(self) -> pd.Series:
+        cycle = self.cycle
+        pchip = interpolate.PchipInterpolator(cycle.index, cycle.to_numpy())
+        index = np.linspace(0, cycle.index[-1], self.v_samples_count)
+        return pd.Series(pchip(index), index=index, name="v_pitch_samples")
+
+    def make_clip_samples(self, v_samples) -> pd.Series:
+        v_samples = v_samples.ewm(com=0.5).mean()
+        pchip = interpolate.PchipInterpolator(v_samples.index, v_samples.to_numpy())
+        index = np.linspace(0, self.cycle.index[-1], self.clip_samples_count)
+        return pd.Series(pchip(index), index=index, name="clip_samples")
 
     def make_wav(self, fpath):
-        # Arranged every :attr:`min_audible_duration_sec` timestep.
-        clip_samples = self.cycle[:: self.cycle_sample_distance]
+        ## Arranged every :attr:`min_audible_duration_sec` timestep.
+        v_pitch_samples: pd.Series = self.make_v_pitch_samples()
+        clip_samples: pd.Series = self.make_clip_samples(v_pitch_samples)
 
-        clip = np.hstack(
-            [
-                self.synth.sine_pcm( # "sin" for V, "saw" for N
-                    length=self.min_audible_duration_sec,
-                    frequency=self.freq_shift * n + 1,
-                )
-                for n in clip_samples
-            ]
-        )
-        self._limit_to_rms(clip)
-        clip = self._filter_seam_clicks(clip)
+        clip = self.fm_wave(clip_samples)
+        # self._limit_to_rms(clip, self.rms_limiter_factor)
+        clip = self._filter_low_pass(clip)
+        # clip = clip.to_numpy()
         self.synth.save_wave(clip, fpath)
 
 
@@ -161,9 +182,9 @@ wltp_audio = CycleAudio(mdl.get_class_v_cycle("class3b"), 30)
 
 ## Set NEDC clip duration respectively to WLTP one.
 #
-nedc_cycle = nedc_cycle_data()["v_cycle"]
+nedc_cycle = pd.Series(nedc_cycle_data()["v_cycle"])
 nedc_cycle_duration_sec = len(nedc_cycle) - 1
-nedc_clip_duration_sec = (
+nedc_clip_duration_sec = int(
     wltp_audio.clip_duration_sec
     * nedc_cycle_duration_sec
     / wltp_audio.cycle_duration_sec
