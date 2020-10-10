@@ -93,7 +93,7 @@ properties:
       - input
       - output
   n_lim:
-    title: (optional) maximum engine speed limit
+    title: (optional) maximum engine speed limit refered to by Annex 2-2.g & i.
     $ref: "#/definitions/positiveNumber"
     units: min⁻¹
     tags:
@@ -109,7 +109,7 @@ properties:
   n95_high:
     description:
       The `n_max1` of Annex 2-2.g calculated from wot's high `n` (min⁻¹)
-      where 95% of power is produced.
+      where 95% of power is produced, unless a lower `n_lim` is given.
     $ref: "#/definitions/positiveNumber"
     units: min⁻¹
     tags:
@@ -123,7 +123,14 @@ properties:
       - input
       - output
   n_max_vehicle:
-    description: The `n_max3` of Annex 2-2.g from  `v_max` (Annex 2-2.i).
+    description: The `n_max3` of Annex 2-2.g from `v_max` (Annex 2-2.i).
+    $ref: "#/definitions/positiveNumber"
+    units: min⁻¹
+    tags:
+      - input
+      - output
+  n_max:
+    description: The maximum of `n95_high`, `n_max_cycle` & `n_max_vehicle` of Annex 2-2.g.
     $ref: "#/definitions/positiveNumber"
     units: min⁻¹
     tags:

@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+    #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 #
 # Copyright 2013-2020 European Commission (JRC);
@@ -273,68 +273,18 @@ class Experiment(object):
             cb.cycle[c.p_resist], cb.cycle[c.p_inert]
         )
 
-        ## VALIDATE AGAINST PIPELINE No1
-        #
+        from graphtik import config
+
         inp = {**mdl, "V_compensated": V}
-        sol = pipelines.cycler_pipeline().compute(inp.copy())
+        with config.evictions_skipped(True):
+            sol = pipelines.cycler_pipeline().compute(inp.copy())
         graph_cycle = sol["cycle"]
         P_req = graph_cycle["P_req"]
         p_req = cb.cycle[c.p_req]
         idx = ~p_req.isnull()
         assert (p_req[idx] == P_req[idx]).all()
 
-        ## Remaining n_max values
-        #
-        g_max_n2v = n2v_ratios[mdl[m.g_vmax] - 1]
-        #  NOTE: `n95_high` is not rounded based on v, like the rest n_mins.
-        mdl[m.n_max1] = mdl[m.n95_high]
-        #  NOTE: In Annex 2-2.g, it is confusing g_top with g_vmax;
-        #  the later stack betters against accdb results.
-        mdl[m.n_max2] = n_max_cycle = g_max_n2v * cb.V.max()
-        mdl[m.n_max3] = g_max_n2v * mdl[m.v_max]
-        mdl[m.n_max] = engine.calc_n_max(mdl[m.n_max1], mdl[m.n_max2], mdl[m.n_max3])
-
-        # TODO: incorporate `t_cold_end` check in validation framework.
-        if wltc_class:
-            for err in cb.validate_nims_t_cold_end(mdl[m.t_cold_end], wltc_parts):
-                raise err
-
-        initial_gear_flags = cb.calc_initial_gear_flags(
-            g_vmax=mdl[m.g_vmax],
-            n95_high=n95_high,
-            n_max_cycle=n_max_cycle,
-            # TODO: expand nmins
-            nmins=nmindrive.mdl_2_n_min_drives(**mdl)["n_min_drives"],
-        )
-        ok_n_flags = cb.combine_ok_n_gear_flags(initial_gear_flags)
-        ok_flags = pd.concat((initial_gear_flags, ok_n_flags), axis=1)
-
-        # TEMP
-        cycle = cb.cycle
-        cycle = cycler.calc_p_remain(cycle, cycle["p_avail"], cycle[c.p_req], cb.gidx)
-        cycle = cycler.calc_ok_p_rule(cycle, cycle["P_remain"], cb.gidx)
-        ok_p = cycle.loc[:, ("ok_p", slice(None))]
-        cb.cycle = cycle
-        ok_gears = cb.derrive_ok_gears(pd.concat((ok_flags, ok_p), axis=1))
-
-        g_min, g_max0, G_scala = cb.make_gmax0(ok_gears)
-
-        cb.add_columns(ok_flags, ok_gears, G_scala, g_min, g_max0)
-
-        mdl[m.cycle] = cb.cycle
-
-        ## VALIDATE AGAINST PIPELINE No2
-        #
-        from pandas.testing import assert_frame_equal
-
-        assert_frame_equal(
-            graph_cycle[["p_avail", "ok_gear", "g_min", "g_max0"]],
-            cb.cycle[["p_avail", "ok_gear", "g_min", "g_max0"]],
-            obj="cycle",
-            check_like=True,
-            check_names=False,
-            check_dtype=False,
-        )
+        mdl.update(sol)
 
         return mdl
 
@@ -672,101 +622,3 @@ def applyDriveabilityRules(V, A, GEARS, CLUTCH, driveability_issues):
         rule_c2(bV, A, GEARS, CLUTCH, driveability_issues, re_zeros)
 
     rule_a(bV, GEARS, CLUTCH, driveability_issues, re_zeros)
-
-
-def run_cycle(
-    V, A, P_REQ, n2v_ratios, n_idle, n_min_drive, n_rated, p_rated, load_curve, mdl
-):
-    """Calculates gears, clutch and actual-velocity for the cycle (V).
-    Initial calculations happen on engine_revs for all gears, for all time-steps of the cycle (_N_GEARS array).
-    Driveability-rules are applied afterwards on the selected gear-sequence, for all steps.
-
-    :param V: the cycle, the velocity profile
-    :param A: acceleration of the cycle (diff over V) in m/sec^2
-    :return: CLUTCH:    a (1 X #velocity) bool-array, eg. [3, 150] --> gear(3), time(150)
-
-    :rtype: array
-    """
-
-    ## A multimap to collect problems.
-    #
-    driveability_issues = np.empty_like(V, dtype="object")
-    driveability_issues[:] = ""
-
-    ## Read and calc model parameters.
-    #
-    n_range = n_rated - n_idle
-
-    f_n_max = mdl["f_n_max"]
-    n_max = n_idle + f_n_max * n_range
-
-    if n_min_drive is None:
-        f_n_min = mdl["f_n_min"]
-        n_min_drive = n_idle + f_n_min * n_range
-
-    f_n_min_gear2 = mdl["f_n_min_gear2"]
-    n_min_gear2 = f_n_min_gear2 * n_idle
-
-    f_n_clutch_gear2 = mdl["f_n_clutch_gear2"]
-    n_clutch_gear2 = max(
-        f_n_clutch_gear2[0] * n_idle, f_n_clutch_gear2[1] * n_range + n_idle
-    )
-
-    p_safety_margin = mdl["f_safety_margin"]
-    v_stopped_threshold = mdl["v_stopped_threshold"]
-
-    (_N_GEARS, _GEARS, _GEAR_RATIOS) = calcEngineRevs_required(
-        V, n2v_ratios, n_idle, v_stopped_threshold
-    )
-
-    (_G_BY_N, CLUTCH) = possibleGears_byEngineRevs(
-        V,
-        A,
-        _N_GEARS,
-        len(n2v_ratios),
-        n_idle,
-        n_min_drive,
-        n_min_gear2,
-        n_max,
-        v_stopped_threshold,
-        driveability_issues,
-    )
-
-    (_G_BY_P, _P_AVAILS, _N_NORMS) = possibleGears_byPower(
-        _N_GEARS,
-        P_REQ,
-        n_idle,
-        n_rated,
-        p_rated,
-        load_curve,
-        p_safety_margin,
-        driveability_issues,
-    )
-
-    assert (
-        _GEAR_RATIOS.shape == _N_GEARS.shape == _P_AVAILS.shape == _N_NORMS.shape
-    ), _shapes(_GEAR_RATIOS, _N_GEARS, _P_AVAILS, _N_NORMS)
-
-    GEARS = selectGears(_GEARS, _G_BY_N, _G_BY_P, driveability_issues)
-    CLUTCH[(GEARS == 2) & (_N_GEARS[1, :] < n_clutch_gear2)] = True
-
-    assert V.shape == GEARS.shape, _shapes(V, GEARS)
-    assert GEARS.shape == CLUTCH.shape == driveability_issues.shape, _shapes(
-        GEARS, CLUTCH.shape, driveability_issues
-    )
-    assert "i" == GEARS.dtype.kind, GEARS.dtype
-    assert ((GEARS >= -1) & (GEARS <= len(n2v_ratios))).all(), (min(GEARS), max(GEARS))
-
-    return (
-        GEARS,
-        CLUTCH,
-        _GEAR_RATIOS,
-        _N_GEARS,
-        _P_AVAILS,
-        _N_NORMS,
-        driveability_issues,
-    )
-
-
-if __name__ == "__main__":
-    pass

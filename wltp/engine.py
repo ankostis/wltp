@@ -15,7 +15,7 @@ import pandas as pd
 from jsonschema import ValidationError
 from scipy import interpolate
 
-from graphtik import modify, optional, sfx, sfxed
+from graphtik import implicit, optional, sfx, sfxed
 
 from . import autograph as autog
 from . import invariants as inv
@@ -344,7 +344,7 @@ def interpolate_wot_on_v_grid(wot: pd.DataFrame, n2v_ratios) -> pd.DataFrame:
 
 
 @autog.autographed(
-    provides=[sfxed("gwots", "p_avail"), modify("cycle/p_avail", implicit=1)],
+    provides=[sfxed("gwots", "p_avail"), implicit("gwots/p_avail")],
 )
 def attach_p_avail_in_gwots(gwots: pd.DataFrame, *, f_safety_margin) -> pd.DataFrame:
     """
@@ -377,7 +377,7 @@ def calc_n95(wot: pd.DataFrame, n_rated: int, p_rated: float) -> Tuple[float, fl
     """
     Find wot's high (& low) `n` where 95% of power is produced (`n_max1` of Annex 2-2.g).
 
-    TODO: accept `n_lim`
+    TODO: accept `n_lim` in VMAX & n95_high
 
     Split `P_norm` in 2 sections around `n_rated`, and interpolate separately
     each section.

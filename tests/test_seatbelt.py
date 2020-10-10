@@ -68,12 +68,27 @@ def test_taskforce_vehs(
                 assert_series_equal(calced, stored, obj=name)
             else:
                 if name == "Cycle":
+                    calced = calced.rename(
+                        {"OK_g0": "ok_gear0"}, axis=1, level=0
+                    ).rename(
+                        lambda col: col.lower(),
+                        axis=1,
+                        level=0,
+                    )
+                    stored = stored.rename(
+                        lambda col: col.lower(),
+                        axis=1,
+                        level=0,
+                    )
                     a, b = set(calced.columns), set(stored.columns)
-                    if a - b:
-                        calced = calced.drop(a - b, axis=1)
-                    if b - a:
-                        raise ValueError(f"Calced is missing: {list(b - a)}")
-                        # stored = stored.drop(b - a, axis=1)
+                    extras = a - b
+                    if extras:
+                        calced = calced.drop(extras, axis=1)
+                    missing = b - a
+                    if missing:
+                        if missing - {("accel", ""), ("cruise", "")}:
+                            raise ValueError(f"Calced is missing: {sorted(b - a)}")
+                        stored = stored.drop(b - a, axis=1)
                     calced, stored = calced.sort_index(axis=1), stored.sort_index(
                         axis=1
                     )

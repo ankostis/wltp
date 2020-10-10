@@ -195,9 +195,9 @@ equivalent_props = [
     ("v_max", "v_max"),
     ("n_vmax", "n_vmax"),
     ("gear_v_max", "g_vmax"),
-    ("n_max1", "n_max1"),
-    ("n_max2", "n_max2"),
-    ("n_max3", "n_max3"),
+    ("n_max1", "n95_high"),
+    ("n_max2", "n_max_cycle"),
+    ("n_max3", "n_max_vehicle"),
     ("n_max", "n_max"),
 ]
 display(

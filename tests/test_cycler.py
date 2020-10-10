@@ -188,7 +188,34 @@ def test_cycler_pipeline():  # wltc_class):
     datamodel.validate_model(inp, additional_properties=True)
 
     with config.evictions_skipped(True):
-        sol = pipe.compute(inp)
+        sol = pipe.compute(inp, callbacks=(pipelines.check_dupe_cols))
+    cycle = sol["cycle"]
+
+    exp = """
+    test_mass p_rated n_rated n_idle n2v_ratios wot resistance_coeffs_regression_curves f0 f1
+    f2 wltc_data wltc_class v_max g_vmax t_cold_end f_dsc_threshold f_dsc_decimals driver_mass
+    v_stopped_threshold f_inertial f_safety_margin f_n_min f_n_min_gear2 f_n_clutch_gear2
+    f_running_threshold f_up_threshold v_cap n_min_drive1 n_min_drive2_up
+    n_min_drive2_stopdecel n_min_drive2 n_min_drive_set n_min_drive_up n_min_drive_up_start
+    n_min_drive_down n_min_drive_down_start wltc_class_data class_phase_boundaries
+    phase_marker gwots n2v_g_vmax n95_low n95_high n_max_vehicle gidx V_dsc cycle n_max_cycle
+    n_max gidx2
+    """.split()
+    print("SOL:", "\n".join(textwrap.wrap(" ".join(sol), 90)))
+    assert list(sol) == exp
+
+    assert len(cycle) == 1612
+    # assert len(cycle.columns) == 105
+
+    renames = {
+        "OK_max_n": "ok_max_n",
+        "OK_g0": "ok_gear0",
+        "OK_p": "ok_p",
+        "OK_n": "ok_n",
+        "OK_gear": "ok_gear",
+        "G_min": "g_min",
+        "G_max0": "g_max0",
+    }
     exp = [
         ("t", ""),
         ("V_cycle", ""),
@@ -202,6 +229,7 @@ def test_cycler_pipeline():  # wltc_class):
         ("accel_raw", ""),
         ("run", ""),
         ("stop", ""),
+        # ("accel", ""),
         ("decel", ""),
         ("initaccel", ""),
         ("stopdecel", ""),
@@ -245,8 +273,6 @@ def test_cycler_pipeline():  # wltc_class):
         ("p_norm", "g4"),
         ("p_norm", "g5"),
         ("p_norm", "g6"),
-        ("P_remain", "g1"),
-        ("P_remain", "g2"),
         ("P_remain", "g3"),
         ("P_remain", "g4"),
         ("P_remain", "g5"),
@@ -255,13 +281,13 @@ def test_cycler_pipeline():  # wltc_class):
         ("ok_p", "g4"),
         ("ok_p", "g5"),
         ("ok_p", "g6"),
-        ("ok_gear0", "g0"),
         ("ok_max_n", "g1"),
         ("ok_max_n", "g2"),
         ("ok_max_n", "g3"),
         ("ok_max_n", "g4"),
         ("ok_max_n", "g5"),
         ("ok_max_n", "g6"),
+        ("ok_gear0", "g0"),
         ("ok_min_n_g1", "g1"),
         ("ok_min_n_g1_initaccel", "g1"),
         ("ok_min_n_g2", "g2"),
@@ -287,12 +313,21 @@ def test_cycler_pipeline():  # wltc_class):
         ("ok_gear", "g4"),
         ("ok_gear", "g5"),
         ("ok_gear", "g6"),
+        ("G_scala", "g0"),
+        ("G_scala", "g1"),
+        ("G_scala", "g2"),
+        ("G_scala", "g3"),
+        ("G_scala", "g4"),
+        ("G_scala", "g5"),
+        ("G_scala", "g6"),
         ("g_min", ""),
         ("g_max0", ""),
     ]
-
-    print(sol["cycle"].columns)
-    assert list(sol["cycle"].columns) == exp
+    got = cycle.rename(columns=renames, level=0).columns
+    with pd.option_context("display.max_seq_items", None):
+        print(got)
+    # assert set(cycle.columns) == set(exp)
+    assert list(got) == list(exp)
     assert not (
         {
             "class_phase_boundaries",
@@ -310,15 +345,20 @@ def test_cycler_pipeline():  # wltc_class):
     steps_executed = [getattr(n, "name", n) for n in sol.executed]
     print("\n".join(textwrap.wrap(" ".join(steps), 90)))
     # print("\n".join(textwrap.wrap(" ".join(steps_executed), 90)))
-    exp_steps = """
-    get_wltc_class_data get_class_phase_boundaries PhaseMarker interpolate_wot_on_v_grid
-    attach_p_avail_in_gwots calc_n2v_g_vmax calc_n95 calc_n_max_vehicle
-    make_gwots_multi_indexer FAKE.V_dsc init_cycle_velocity calc_acceleration
-    attach_class_phase_markers calc_phase_accel_raw calc_phase_run_stop calc_phase_decel
-    calc_phase_initaccel calc_phase_stopdecel calc_phase_up calc_p_resist calc_inertial_power
-    calc_required_power calc_n_max_cycle calc_n_max validate_n_max attach_wots calc_p_remain
-    calc_ok_p_rule derrive_initial_gear_flags derrive_ok_n_flags concat_frame_columns
-    make_cycle_multi_indexer derrive_ok_gears make_incrementing_gflags make_G_min make_G_max0
-    attach_gear_flags
-    """.split()
+    exp_steps = (
+        """
+        get_wltc_class_data get_class_phase_boundaries PhaseMarker interpolate_wot_on_v_grid
+        attach_p_avail_in_gwots calc_n2v_g_vmax calc_n95 calc_n_max_vehicle
+        make_gwots_multi_indexer FAKE.V_dsc init_cycle_velocity calc_acceleration
+        attach_class_phase_markers calc_phase_accel_raw calc_phase_run_stop
+        """
+        # calc_phase_accel
+        """
+        calc_phase_decel calc_phase_initaccel calc_phase_stopdecel calc_phase_up calc_p_resist
+        calc_inertial_power calc_required_power calc_n_max_cycle calc_n_max validate_n_max
+        join_gwots_with_cycle calc_P_remain calc_OK_p calc_OK_max_n calc_OK_g0 calc_OK_min_n
+        derrive_ok_n_flags calc_ok_gears make_cycle_multi_indexer make_G_scala make_G_min
+        make_G_max0
+        """.split()
+    )
     assert steps == steps_executed == exp_steps
