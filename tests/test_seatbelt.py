@@ -72,14 +72,25 @@ def test_taskforce_vehs(
                     if a - b:
                         calced = calced.drop(a - b, axis=1)
                     if b - a:
-                        stored = stored.drop(b - a, axis=1)
+                        raise ValueError(f"Calced is missing: {list(b - a)}")
+                        # stored = stored.drop(b - a, axis=1)
+                    calced, stored = calced.sort_index(axis=1), stored.sort_index(
+                        axis=1
+                    )
                     assert (name != "Cycle" or len(calced.columns) >= 70) and len(
                         calced.columns
                     ) == len(stored.columns)
                 else:
-                    calced.columns = stored.columns # compare by order
+                    calced.columns = stored.columns  # compare by order
                 # Ignore column order.
-                assert_frame_equal(calced, stored, obj=name, check_like=True)
+                assert_frame_equal(
+                    calced,
+                    stored,
+                    obj=name,
+                    check_like=True,
+                    check_names=False,
+                    check_dtype=False,
+                )
 
     def store_vehicle(h5db, vehnum, oprops, cycle, wots_vmax):
         log.info("STORING veh(v%0.3i)...", vehnum)
