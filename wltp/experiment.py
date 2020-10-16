@@ -308,7 +308,14 @@ class Experiment(object):
         )
         ok_n_flags = cb.combine_ok_n_gear_flags(initial_gear_flags)
         ok_flags = pd.concat((initial_gear_flags, ok_n_flags), axis=1)
-        ok_gears = cb.derrive_ok_gears(ok_flags)
+
+        # TEMP
+        cycle = cb.cycle
+        cycle = cycler.calc_p_remain(cycle, cycle["p_avail"], cycle[c.p_req], cb.gidx)
+        cycle = cycler.calc_ok_p_rule(cycle, cycle["P_remain"], cb.gidx)
+        ok_p = cycle.loc[:, ("ok_p", slice(None))]
+        cb.cycle = cycle
+        ok_gears = cb.derrive_ok_gears(pd.concat((ok_flags, ok_p), axis=1))
 
         g_min, g_max0, G_scala = cb.make_gmax0(ok_gears)
 
@@ -318,8 +325,16 @@ class Experiment(object):
 
         ## VALIDATE AGAINST PIPELINE No2
         #
-        assert (g_min == graph_cycle["g_min"]).all()
-        assert (g_max0 == graph_cycle["g_max0"]).all()
+        from pandas.testing import assert_frame_equal
+
+        assert_frame_equal(
+            graph_cycle[["p_avail", "ok_gear", "g_min", "g_max0"]],
+            cb.cycle[["p_avail", "ok_gear", "g_min", "g_max0"]],
+            obj="cycle",
+            check_like=True,
+            check_names=False,
+            check_dtype=False,
+        )
 
         return mdl
 
@@ -447,10 +462,10 @@ def rule_checkSingletons(bV, GEARS, CLUTCH, driveability_issues, re_zeros):
 def rule_a(bV, GEARS, CLUTCH, driveability_issues, re_zeros):
     """Rule (a): Clutch & set to 1st-gear before accelerating from standstill.
 
-     Implemented with a regex, outside rules-loop:
-     Also ensures gear-0 always followed by gear-1.
+    Implemented with a regex, outside rules-loop:
+    Also ensures gear-0 always followed by gear-1.
 
-     NOTE: Rule(A) not inside x2 loop, and last to run.
+    NOTE: Rule(A) not inside x2 loop, and last to run.
     """
 
     for m in re_zeros.finditer(bV):
@@ -524,10 +539,10 @@ def step_rule_c1(t, pg, g, V, A, GEARS, driveability_issues):
 def rule_c2(bV, A, GEARS, CLUTCH, driveability_issues, re_zeros):
     """Rule (c2): Skip 1st-gear while decelerating to standstill.
 
-     Implemented with a regex, outside rules-loop:
-     Search for zeros in _reversed_ V & GEAR profiles,
-     for as long Accel is negative.
-     NOTE: Rule(c2) is the last rule to run.
+    Implemented with a regex, outside rules-loop:
+    Search for zeros in _reversed_ V & GEAR profiles,
+    for as long Accel is negative.
+    NOTE: Rule(c2) is the last rule to run.
     """
 
     nV = len(bV)

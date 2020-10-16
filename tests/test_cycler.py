@@ -189,7 +189,6 @@ def test_cycler_pipeline():  # wltc_class):
 
     with config.evictions_skipped(True):
         sol = pipe.compute(inp)
-
     exp = [
         ("t", ""),
         ("V_cycle", ""),
@@ -246,6 +245,16 @@ def test_cycler_pipeline():  # wltc_class):
         ("p_norm", "g4"),
         ("p_norm", "g5"),
         ("p_norm", "g6"),
+        ("P_remain", "g1"),
+        ("P_remain", "g2"),
+        ("P_remain", "g3"),
+        ("P_remain", "g4"),
+        ("P_remain", "g5"),
+        ("P_remain", "g6"),
+        ("ok_p", "g3"),
+        ("ok_p", "g4"),
+        ("ok_p", "g5"),
+        ("ok_p", "g6"),
         ("ok_gear0", "g0"),
         ("ok_max_n", "g1"),
         ("ok_max_n", "g2"),
@@ -265,10 +274,6 @@ def test_cycler_pipeline():  # wltc_class):
         ("ok_min_n_g3plus_ups", "g4"),
         ("ok_min_n_g3plus_ups", "g5"),
         ("ok_min_n_g3plus_ups", "g6"),
-        ("ok_p", "g3"),
-        ("ok_p", "g4"),
-        ("ok_p", "g5"),
-        ("ok_p", "g6"),
         ("ok_n", "g1"),
         ("ok_n", "g2"),
         ("ok_n", "g3"),
@@ -311,8 +316,8 @@ def test_cycler_pipeline():  # wltc_class):
     make_gwots_multi_indexer FAKE.V_dsc init_cycle_velocity calc_acceleration
     attach_class_phase_markers calc_phase_accel_raw calc_phase_run_stop calc_phase_decel
     calc_phase_initaccel calc_phase_stopdecel calc_phase_up calc_p_resist calc_inertial_power
-    calc_required_power calc_n_max_cycle calc_n_max validate_n_max attach_wots
-    derrive_initial_gear_flags derrive_ok_n_flags concat_frame_columns
+    calc_required_power calc_n_max_cycle calc_n_max validate_n_max attach_wots calc_p_remain
+    calc_ok_p_rule derrive_initial_gear_flags derrive_ok_n_flags concat_frame_columns
     make_cycle_multi_indexer derrive_ok_gears make_incrementing_gflags make_G_min make_G_max0
     attach_gear_flags
     """.split()

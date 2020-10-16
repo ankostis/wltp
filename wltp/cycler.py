@@ -498,24 +498,46 @@ class CycleBuilder:
 
 
 
-def calc_p_remain(P_avail: pd.DataFrame, P_req: pd.Series):
+@autog.autographed(
+    needs=[
+        sfxed("cycle", "gwots"),
+        "cycle/p_avail",
+        "cycle/P_req",
+        ...,
+    ],
+    provides=[
+        sfxed("cycle", "P_remain"),
+        modify("cycle/P_remain", implicit=1),
+    ],
+)
+def calc_p_remain(
+    cycle: pd.DataFrame,
+    P_avail: pd.DataFrame,
+    P_req: pd.Series,
+    gidx: wio.GearMultiIndexer,
+):
     """
     Return `p_avail - p_req` for all gears > g2 in `gwot`
-
-    TODO: Separate :func:`calc_p_remain` not used yet
     """
     c = wio.pstep_factory.get().cycle
 
-    gidx = wio.GearMultiIndexer.from_df(P_avail, P_avail.name)
     ## Drop pandas axis or else substraction would fail with:
-    #       ValueError: cannot join with no overlapping index names
-    p_remain = P_avail - P_req.to_numpy().reshape(-1, 1)
-    p_remain.columns = wio.GearMultiIndexer.from_df(P_avail, c.p_remain)[3:]
+    #  ValueError: cannot join with no overlapping index names
+    g3 = 3
+    P_req = P_req.fillna(1).to_numpy().reshape(-1, 1)
+    p_remain = P_avail.loc[:, gidx[g3:]].fillna(0) - P_req
+    p_remain.columns = gidx.with_item(c.P_remain)[g3:]
 
-    return p_remain
+    return pd.concat((cycle, p_remain), axis=1)
 
 
-def calc_ok_p_rule(P_remain: pd.DataFrame):
+@autog.autographed(
+    needs=[sfxed("cycle", "P_remain"), "cycle/P_remain", ...],
+    provides=[sfxed("cycle", "OK_p"), modify("cycle/OK_p", implicit=1)],
+)
+def calc_ok_p_rule(
+    cycle: pd.DataFrame, P_remain: pd.DataFrame, gidx: wio.GearMultiIndexer
+):
     """
     Sufficient power rule for gears > g2, in Annex 2-3.5.
 
@@ -523,11 +545,11 @@ def calc_ok_p_rule(P_remain: pd.DataFrame):
     """
     c = wio.pstep_factory.get().cycle
 
-    ok_p = P_remain >= 0
-    gidx = wio.GearMultiIndexer.from_df(P_remain, c.ok_p)
-    ok_p.columns = gidx.with_item(c.ok_p)[3:]
+    g3 = 3
+    ok_p = (P_remain[gidx[g3:]] >= 0).astype("int8")
+    ok_p.columns = gidx.with_item(c.ok_p)[g3:]
 
-    return ok_p.astype("int8")
+    return pd.concat((cycle, ok_p), axis=1)
 
 
 def fill_insufficient_power(cycle):
@@ -633,7 +655,7 @@ def attach_class_phase_markers(
 
 @autog.autographed(
     needs=[sfxed("cycle", "v_phases"), "cycle/V", sfxed("gwots", "p_avail"), ...],
-    provides=[sfxed("cycle", "gwots")],
+    provides=[sfxed("cycle", "gwots"), sfxed("cycle", "p_avail", implicit=1)],
 )
 def attach_wots(
     cycle: pd.DataFrame, V: pd.Series, gwots: pd.DataFrame, gidx: wio.GearMultiIndexer
@@ -672,7 +694,7 @@ def attach_wots(
 
 @autog.autographed(
     needs=[
-        sfxed("cycle", "v_phases", "gwots"),
+        sfxed("cycle", "P_remain", "v_phases", "gwots", "OK_p"),
         "cycle/t",
         "cycle/run",
         "cycle/stop",
@@ -787,13 +809,6 @@ def derrive_initial_gear_flags(
     nidx_below_gvmax = gidx.colidx_pairs(c.n, gears_below_gvmax)
     nidx_from_gvmax = gidx.colidx_pairs(c.n, gears_from_gvmax)
 
-    ## (ok-p) rule
-    #
-    P_req = P_req.fillna(1).values.reshape(-1, 1)
-    pidx_g3plus = gidx.colidx_pairs(c.p_avail, gears_g3plus)
-    ok_p = cycle.loc[:, pidx_g3plus].fillna(0) >= P_req
-    ok_p.columns = gidx.colidx_pairs(c.ok_p, gears_g3plus)
-
     ## (MAXn-1) rule
     #  Special handling of g1 dues to `initaccel` containing n=NAN
     #
@@ -873,7 +888,6 @@ def derrive_initial_gear_flags(
     ok_g0.name = (c.ok_gear0, g0)
 
     flag_columns = (
-        ok_p,
         # .. AND ...
         ok_max_n_g1,
         ok_max_n_gears_below_gvmax,
